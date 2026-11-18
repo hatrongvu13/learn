@@ -17,14 +17,37 @@ const el = (tag, attrs = {}, ...kids) => {
   return e;
 };
 const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-const getWrong = () => { try { return JSON.parse(localStorage.getItem(LS_WRONG)) || []; } catch { return []; } };
-const setWrong = (ids) => localStorage.setItem(LS_WRONG, JSON.stringify([...new Set(ids)]));
+const getWrong = () => { try { return JSON.parse(localStorage.getItem(keyWrong())) || []; } catch { return []; } };
+const setWrong = (ids) => localStorage.setItem(keyWrong(), JSON.stringify([...new Set(ids)]));
 
-fetch("data/questions.json").then((r) => r.json()).then((d) => {
-  ALL = d;
-  document.getElementById("sub").textContent = `${ALL.length} câu hỏi trắc nghiệm`;
+let BANKS = [], BANK = null;
+const LS_BANK = "ttHCM.bank";
+const keyWrong = () => `${LS_WRONG}.${BANK.id}`;
+
+fetch("data/index.json").then((r) => r.json()).then((b) => { BANKS = b; return loadBank(localStorage.getItem(LS_BANK) || b[0].id); })
+  .catch(() => { app.textContent = "Không tải được dữ liệu. Hãy mở bằng máy chủ web (GitHub Pages hoặc python3 -m http.server)."; });
+
+async function loadBank(id) {
+  BANK = BANKS.find((b) => b.id === id) || BANKS[0];
+  localStorage.setItem(LS_BANK, BANK.id);
+  const raw = await (await fetch("data/" + BANK.file)).json();
+  ALL = BANK.type === "qa" ? raw.map((r) => ({ id: r.id, q: r.q, a: r.a.join("; ") })) : raw;
+  document.getElementById("sub").textContent = `${BANK.title} · ${ALL.length} câu`;
   home();
-}).catch(() => { app.textContent = "Không tải được data/questions.json. Hãy mở bằng máy chủ web (GitHub Pages hoặc python3 -m http.server)."; });
+}
+
+// Tạo 4 lựa chọn cho câu chỉ có đáp án đúng: lấy đáp án của câu khác có dạng và độ dài gần nhất.
+const shape = (t) => (/\d/.test(t) ? "n" : "t");
+const unit = (t) => t.toLowerCase().replace(/[\d\s.,\-–—~>≥≤<=/]+/g, "").slice(-6); // đơn vị: g, cm, phút, ngày...
+function toMcq(q) {
+  const key = (t) => t.toLowerCase().replace(/\s+/g, "");
+  const pool = ALL.filter((x) => x.id !== q.id && key(x.a) !== key(q.a));
+  const near = pool.map((x) => ({ x, d: (shape(x.a) === shape(q.a) ? 0 : 1000) + (shape(q.a) === "n" && unit(x.a) !== unit(q.a) ? 300 : 0) + Math.abs(x.a.length - q.a.length) + Math.random() * 15 }))
+    .sort((p, r) => p.d - r.d);
+  const seen = new Set([key(q.a)]), wrong = [];
+  for (const { x } of near) { if (seen.has(key(x.a))) continue; seen.add(key(x.a)); wrong.push(x.a); if (wrong.length === 3) break; }
+  return { id: q.id, q: q.q, opts: [q.a, ...wrong], ans: 0 };
+}
 
 function home() {
   S = null;
@@ -52,7 +75,12 @@ function home() {
   if (!wrong.length) wrongBtn.setAttribute("disabled", "");
   else wrongBtn.removeAttribute("disabled");
 
+  const bankSel = el("select", { "aria-label": "Chọn bộ đề", onchange: (e) => loadBank(e.target.value) },
+    BANKS.map((b) => el("option", { value: b.id, ...(b.id === BANK.id ? { selected: "" } : {}) }, `${b.title}`)));
+  const cardBtn = BANK.type === "qa"
+    ? el("button", { onclick: () => startFlash(shuffle(ALL)) }, "Thẻ ghi nhớ (lật xem đáp án)") : "";
   app.replaceChildren(
+    el("div", { class: "card" }, el("h2", {}, "Bộ đề"), bankSel),
     el("div", { class: "card" }, el("h2", {}, "Cách làm bài"), modeSel,
       el("div", { class: "row" }, el("label", {}, shufBox, "Đảo thứ tự đáp án"))),
     el("h2", {}, "Chọn đề"), el("div", { class: "grid" }, exams),
@@ -60,16 +88,18 @@ function home() {
     el("div", { class: "card" }, el("div", { class: "row" },
       el("button", { class: "pri", onclick: () => start(ALL, "Toàn bộ") }, `Toàn bộ ${ALL.length} câu`),
       el("button", { onclick: () => start(shuffle(ALL), "Toàn bộ (ngẫu nhiên)") }, "Toàn bộ, xáo thứ tự"),
-      wrongBtn),
+      wrongBtn, cardBtn),
       el("div", { class: "row", style: "margin-top:10px" },
         el("button", { onclick: () => { const n = Math.max(1, Math.min(ALL.length, +nInput.value || 1)); start(shuffle(ALL).slice(0, n), `Ngẫu nhiên ${n} câu`); } }, "Ngẫu nhiên"),
         nInput, "câu")),
-    el("p", { class: "small" }, "Mỗi đề gồm 40 câu liên tiếp trong bộ câu hỏi gốc. Câu làm sai được nhớ trên trình duyệt này."));
+    el("p", { class: "small" }, "Mỗi đề gồm 40 câu liên tiếp trong bộ câu hỏi gốc. Câu làm sai được nhớ trên trình duyệt này."
+      + (BANK.type === "qa" ? " Bộ này chỉ có đáp án đúng, nên 3 đáp án nhiễu được lấy từ câu khác." : "")));
 }
 
 function startSession(list, title, o) {
   if (!list.length) return;
-  const qs = list.map((q) => {
+  const qs = list.map((q0) => {
+    const q = q0.opts ? q0 : toMcq(q0);
     const order = o.shuf ? shuffle(q.opts.map((_, i) => i)) : q.opts.map((_, i) => i);
     return { id: q.id, q: q.q, opts: order.map((i) => q.opts[i]), ans: order.indexOf(q.ans), pick: null };
   });
@@ -137,4 +167,21 @@ function result() {
       q.opts.map((t, i) => el("div", { class: "opt " + (i === q.ans ? "ok" : i === q.pick ? "bad" : ""), style: "padding:8px 12px;border:1px solid var(--line);border-radius:8px;margin:6px 0" },
         `${"ABCD"[i]}. ${t}`)),
       q.pick === null ? el("span", { class: "tag" }, "bỏ trống") : "")));
+}
+
+function startFlash(list) {
+  let i = 0, show = false;
+  const draw = () => {
+    const q = list[i];
+    app.replaceChildren(
+      el("div", { class: "row" }, el("button", { onclick: home }, "← Thoát"), el("strong", {}, "Thẻ ghi nhớ"), el("span", { class: "small" }, `${i + 1}/${list.length}`)),
+      el("div", { class: "bar" }, el("i", { style: `width:${((i + 1) / list.length) * 100}%` })),
+      el("div", { class: "card" }, el("div", { class: "small" }, `#${q.id}`), el("div", { class: "q" }, q.q),
+        show ? el("div", { class: "opt ok", style: "padding:10px 12px;border:1px solid var(--ok);border-radius:8px" }, q.a)
+             : el("button", { class: "pri", onclick: () => { show = true; draw(); } }, "Xem đáp án")),
+      el("div", { class: "nav" },
+        el("button", { ...(i === 0 ? { disabled: "" } : {}), onclick: () => { i--; show = false; draw(); } }, "← Trước"),
+        el("button", { class: "pri", onclick: () => { if (i < list.length - 1) { i++; show = false; draw(); } else home(); } }, i < list.length - 1 ? "Sau →" : "Xong")));
+  };
+  draw();
 }

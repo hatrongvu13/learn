@@ -27,11 +27,15 @@ jobs:
         run: |
           python3 - <<'EOF'
           import json
-          d = json.load(open("docs/data/questions.json", encoding="utf-8"))
-          assert len(d) > 0
-          for q in d:
-              assert 0 <= q["ans"] < len(q["opts"]), q["id"]
-          print(len(d), "câu hợp lệ")
+          for b in json.load(open("docs/data/index.json", encoding="utf-8")):
+              d = json.load(open("docs/data/" + b["file"], encoding="utf-8"))
+              assert d, b["id"]
+              for q in d:
+                  if b["type"] == "mcq":
+                      assert 0 <= q["ans"] < len(q["opts"]), (b["id"], q["id"])
+                  else:
+                      assert q["a"], (b["id"], q["id"])
+              print(b["id"], len(d), "câu hợp lệ")
           EOF
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

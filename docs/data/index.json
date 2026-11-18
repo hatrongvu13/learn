@@ -1,0 +1,4 @@
+[
+  {"id": "hcm", "title": "Tư tưởng Hồ Chí Minh", "file": "questions.json", "type": "mcq"},
+  {"id": "sosinh", "title": "Chăm sóc sơ sinh", "file": "qa.json", "type": "qa"}
+]
